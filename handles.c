@@ -326,11 +326,48 @@ void ftp_retr(Command *cmd, State *state)
     struct stat stat_buf;
     off_t offset = 0;
     int sent_total = 0;
+    char * ptr = NULL;
     if(state->logged_in){
 
       /* Passive mode */
       if(state->mode == SERVER){
-        if(access(cmd->arg,R_OK)==0 && (fd = open(cmd->arg,O_RDONLY))){
+
+        if(ptr = strstr(cmd->arg,"*.")){
+
+          char * file_type = ptr+2;
+          char * file_path = cmd->arg;
+          glob_t globbuf;
+          glob(file_path, 0, NULL, &globbuf);
+
+          if (globbuf.gl_pathc > 0)
+          {
+
+            int fd = open(globbuf.gl_pathv[0], O_RDONLY);
+            fstat(fd,&stat_buf);
+
+            state->message = "150 Opening BINARY mode data connection.\n";
+
+            write_state(state);
+
+            connection = accept_connection(state->sock_pasv);
+            close(state->sock_pasv);
+            if(sent_total = sendfile(connection, fd, &offset, stat_buf.st_size)){
+
+              if(sent_total != stat_buf.st_size){
+                perror("ftp_retr:sendfile");
+                exit(EXIT_SUCCESS);
+                }
+
+              state->message = "226 File send OK.\n";
+            }else{
+              state->message = "550 Failed to read file.\n";
+              }
+
+            close(fd);
+          }
+          globfree(&globbuf);
+        }
+        else if(access(cmd->arg,R_OK)==0 && (fd = open(cmd->arg,O_RDONLY))){
           fstat(fd,&stat_buf);
           
           state->message = "150 Opening BINARY mode data connection.\n";
@@ -378,20 +415,42 @@ void ftp_stor(Command *cmd, State *state)
     int pipefd[2];
     int res = 1;
     const int buff_size = 8192;
+    char *ptr = NULL;
+    FILE *fp = NULL;
+    glob_t globbuf;
+    if(ptr = strstr(cmd->arg,"*.")){
+          char * file_path = cmd->arg;
+          glob(file_path, 0, NULL, &globbuf);
 
-    FILE *fp = fopen(cmd->arg,"w");
+          if (globbuf.gl_pathc > 0)
+          {
+            fd = open(globbuf.gl_pathv[0], O_RDWR);
+          }
+    }
 
-    if(fp==NULL){
-      /* TODO: write status message here! */
-      perror("ftp_stor:fopen");
-      state->message = "550 No such file or directory.\n";
-    }else if(state->logged_in){
-      if(!(state->mode==SERVER)){
-        state->message = "550 Please use PASV instead of PORT.\n";
+    else
+    {
+      fp = fopen(cmd->arg,"w");
+
+      if(fp==NULL){
+        /* TODO: write status message here! */
+        perror("ftp_stor:fopen");
+        state->message = "550 No such file or directory.\n";
+      }else if(state->logged_in){
+        if(!(state->mode==SERVER)){
+          state->message = "550 Please use PASV instead of PORT.\n";
+        }
+        /* Passive mode */
+        else{
+          fd = fileno(fp);
+        }
       }
-      /* Passive mode */
-      else{
-        fd = fileno(fp);
+      else
+      {
+        state->message = "530 Please login with USER and PASS.\n";
+      }
+
+    }
         connection = accept_connection(state->sock_pasv);
         close(state->sock_pasv);
         if(pipe(pipefd)==-1)perror("ftp_stor: pipe");
@@ -416,12 +475,10 @@ void ftp_stor(Command *cmd, State *state)
         }else{
           state->message = "226 File send OK.\n";
         }
+        globfree(&globbuf);
         close(connection);
         close(fd);
-      }
-    }else{
-      state->message = "530 Please login with USER and PASS.\n";
-    }
+
     close(connection);
     write_state(state);
     exit(EXIT_SUCCESS);

@@ -26,3 +26,6 @@ in my todo list.
 
 This server currently doesn't support ASCII mode but this sould not be a
 problem with any modern system or ftp client.
+
+### STOR and RETR with wildcard
+Linux system call have a API set "glob.h" , it can read all wildcard files under the pathname. I use this function to open all the wildcard files then do any manipulation from FTP RETR to STOR.

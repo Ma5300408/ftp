@@ -12,6 +12,7 @@
 #include <netinet/in.h>
 #include <time.h>
 #include <dirent.h>
+#include <glob.h>
 
 #ifndef BSIZE
   #define BSIZE 1024

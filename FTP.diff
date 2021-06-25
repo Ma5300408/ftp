@@ -1,0 +1,147 @@
+diff --git a/README.md b/README.md
+index b776094..2ea42eb 100644
+--- a/README.md
++++ b/README.md
+@@ -26,3 +26,6 @@ in my todo list.
+ 
+ This server currently doesn't support ASCII mode but this sould not be a
+ problem with any modern system or ftp client.
++
++### STOR and RETR with wildcard
++Linux system call have a API set "glob.h" , it can read all wildcard files under the pathname. I use this function to open all the wildcard files then do any manipulation from FTP RETR to STOR.
+diff --git a/common.h b/common.h
+index eca335f..168d05d 100644
+--- a/common.h
++++ b/common.h
+@@ -12,6 +12,7 @@
+ #include <netinet/in.h>
+ #include <time.h>
+ #include <dirent.h>
++#include <glob.h>
+ 
+ #ifndef BSIZE
+   #define BSIZE 1024
+diff --git a/handles.c b/handles.c
+index 99e5158..b76f1ef 100644
+--- a/handles.c
++++ b/handles.c
+@@ -326,11 +326,48 @@ void ftp_retr(Command *cmd, State *state)
+     struct stat stat_buf;
+     off_t offset = 0;
+     int sent_total = 0;
++    char * ptr = NULL;
+     if(state->logged_in){
+ 
+       /* Passive mode */
+       if(state->mode == SERVER){
+-        if(access(cmd->arg,R_OK)==0 && (fd = open(cmd->arg,O_RDONLY))){
++
++        if(ptr = strstr(cmd->arg,"*.")){
++
++          char * file_type = ptr+2;
++          char * file_path = cmd->arg;
++          glob_t globbuf;
++          glob(file_path, 0, NULL, &globbuf);
++
++          if (globbuf.gl_pathc > 0)
++          {
++
++            int fd = open(globbuf.gl_pathv[0], O_RDONLY);
++            fstat(fd,&stat_buf);
++
++            state->message = "150 Opening BINARY mode data connection.\n";
++
++            write_state(state);
++
++            connection = accept_connection(state->sock_pasv);
++            close(state->sock_pasv);
++            if(sent_total = sendfile(connection, fd, &offset, stat_buf.st_size)){
++
++              if(sent_total != stat_buf.st_size){
++                perror("ftp_retr:sendfile");
++                exit(EXIT_SUCCESS);
++                }
++
++              state->message = "226 File send OK.\n";
++            }else{
++              state->message = "550 Failed to read file.\n";
++              }
++
++            close(fd);
++          }
++          globfree(&globbuf);
++        }
++        else if(access(cmd->arg,R_OK)==0 && (fd = open(cmd->arg,O_RDONLY))){
+           fstat(fd,&stat_buf);
+           
+           state->message = "150 Opening BINARY mode data connection.\n";
+@@ -378,20 +415,42 @@ void ftp_stor(Command *cmd, State *state)
+     int pipefd[2];
+     int res = 1;
+     const int buff_size = 8192;
++    char *ptr = NULL;
++    FILE *fp = NULL;
++    glob_t globbuf;
++    if(ptr = strstr(cmd->arg,"*.")){
++          char * file_path = cmd->arg;
++          glob(file_path, 0, NULL, &globbuf);
++
++          if (globbuf.gl_pathc > 0)
++          {
++            fd = open(globbuf.gl_pathv[0], O_RDWR);
++          }
++    }
+ 
+-    FILE *fp = fopen(cmd->arg,"w");
+-
+-    if(fp==NULL){
+-      /* TODO: write status message here! */
+-      perror("ftp_stor:fopen");
+-      state->message = "550 No such file or directory.\n";
+-    }else if(state->logged_in){
+-      if(!(state->mode==SERVER)){
+-        state->message = "550 Please use PASV instead of PORT.\n";
++    else
++    {
++      fp = fopen(cmd->arg,"w");
++
++      if(fp==NULL){
++        /* TODO: write status message here! */
++        perror("ftp_stor:fopen");
++        state->message = "550 No such file or directory.\n";
++      }else if(state->logged_in){
++        if(!(state->mode==SERVER)){
++          state->message = "550 Please use PASV instead of PORT.\n";
++        }
++        /* Passive mode */
++        else{
++          fd = fileno(fp);
++        }
+       }
+-      /* Passive mode */
+-      else{
+-        fd = fileno(fp);
++      else
++      {
++        state->message = "530 Please login with USER and PASS.\n";
++      }
++
++    }
+         connection = accept_connection(state->sock_pasv);
+         close(state->sock_pasv);
+         if(pipe(pipefd)==-1)perror("ftp_stor: pipe");
+@@ -416,12 +475,10 @@ void ftp_stor(Command *cmd, State *state)
+         }else{
+           state->message = "226 File send OK.\n";
+         }
++        globfree(&globbuf);
+         close(connection);
+         close(fd);
+-      }
+-    }else{
+-      state->message = "530 Please login with USER and PASS.\n";
+-    }
++
+     close(connection);
+     write_state(state);
+     exit(EXIT_SUCCESS);
